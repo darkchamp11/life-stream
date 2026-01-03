@@ -8,12 +8,13 @@ import type { BloodType } from '@/types';
 export interface DonorIdentity {
     id: string;
     username: string;        // Shown before hospital accepts (e.g., "Donor_A3X")
-    realName: string;        // Shown after hospital accepts
+    realName?: string;       // Shown after hospital accepts (optional until registered)
     bloodType: BloodType;
     avatarSeed: string;      // For generating consistent random avatar
     donationCount: number;
     donationHistory: DonationRecord[];
     createdAt: string;
+    isRegistered: boolean;   // True after user completes registration
 }
 
 export interface DonationRecord {
@@ -111,12 +112,13 @@ function createNewIdentity(): DonorIdentity {
     return {
         id: `donor_${generateId(8).toLowerCase()}`,
         username: generateUsername(),
-        realName: generateRealName(),
+        realName: undefined,  // Not set until registration
         bloodType,
         avatarSeed: generateId(10),
         donationCount: donationHistory.length,
         donationHistory,
         createdAt: new Date().toISOString(),
+        isRegistered: false,  // Not registered until user completes registration
     };
 }
 
@@ -180,4 +182,37 @@ export function clearDonorIdentity(): void {
  */
 export function getAvatarUrl(seed: string): string {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}&backgroundColor=b6e3f4,c0aede,d1d4f9`;
+}
+
+/**
+ * Register donor with name and blood type
+ * Updates existing identity with user-provided details
+ */
+export function registerDonor(name: string, bloodType: BloodType): DonorIdentity {
+    const identity = getDonorIdentity();
+
+    identity.realName = name;
+    identity.bloodType = bloodType;
+    identity.isRegistered = true;
+
+    if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+    }
+
+    return identity;
+}
+
+/**
+ * Update donor blood type
+ */
+export function updateDonorBloodType(bloodType: BloodType): DonorIdentity {
+    const identity = getDonorIdentity();
+
+    identity.bloodType = bloodType;
+
+    if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+    }
+
+    return identity;
 }

@@ -73,14 +73,17 @@ export default function HospitalPage() {
                     if (existingIndex >= 0) {
                         updated[existingIndex] = {
                             ...updated[existingIndex],
-                            status: response.accepted ? 'accepted' : 'declined'
+                            status: response.accepted ? 'accepted' : 'declined',
+                            // Update name if provided (privacy-first reveal)
+                            name: response.donorName || updated[existingIndex].name
                         };
                     } else if (response.accepted && response.liveLocation) {
                         // Only add if not already in list
                         if (!updated.find(d => d.id === response.donorId)) {
                             updated.push({
                                 id: response.donorId,
-                                name: `Donor_${response.donorId.slice(-5).toUpperCase()}`,
+                                // Use real name if provided, otherwise anonymous ID
+                                name: response.donorName || `Donor_${response.donorId.slice(-5).toUpperCase()}`,
                                 bloodType: 'O+',
                                 status: 'accepted',
                                 location: response.liveLocation,
@@ -164,6 +167,28 @@ export default function HospitalPage() {
         setConfirmationMessage(`✅ ${selectedDonorIds.length} donor(s) confirmed! They are on their way.`);
     }, [activeRequest, selectedDonorIds]);
 
+    const handleCompleteRequest = useCallback(() => {
+        // Reset entire hospital state
+        setActiveRequest(null);
+        setHospitalState('idle');
+        setDonors((prev) => prev.map((d) => ({ ...d, status: 'active' as const })));
+        setDonorLiveLocations({});
+        setSelectedDonorIds([]);
+        setConfirmationMessage(null);
+        clearRequest();
+        clearSelection();
+    }, []);
+
+    // Get display name for donor (consent-based reveal)
+    const getDisplayName = (donor: Donor) => {
+        // If donor is confirmed and has real name, show it
+        if (selectedDonorIds.includes(donor.id) && donor.name && !donor.name.startsWith('Donor_')) {
+            return donor.name;
+        }
+        // Otherwise show anonymous ID
+        return `Donor_${donor.id.slice(-5).toUpperCase()}`;
+    };
+
     const getAnonymousId = (donor: Donor) => `Donor_${donor.id.slice(-5).toUpperCase()}`;
 
     const acceptedDonors = donors.filter(d => d.status === 'accepted');
@@ -220,8 +245,8 @@ export default function HospitalPage() {
                                     key={type}
                                     onClick={() => setSelectedBloodType(type)}
                                     className={`py-3 rounded-lg font-bold transition-all ${selectedBloodType === type
-                                            ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
-                                            : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                                        ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
+                                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
                                         }`}
                                 >
                                     {type}
@@ -330,11 +355,18 @@ export default function HospitalPage() {
                 <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-3">
                         <span className="text-zinc-400 text-sm">Responding Donors: {acceptedDonors.length}</span>
-                        {selectedDonorIds.length > 0 && hospitalState !== 'confirmed' && (
-                            <Button onClick={handleConfirmSelection} size="sm" className="bg-green-600 hover:bg-green-700">
-                                Confirm {selectedDonorIds.length}
-                            </Button>
-                        )}
+                        <div className="flex gap-2">
+                            {selectedDonorIds.length > 0 && hospitalState !== 'confirmed' && (
+                                <Button onClick={handleConfirmSelection} size="sm" className="bg-green-600 hover:bg-green-700">
+                                    Confirm {selectedDonorIds.length}
+                                </Button>
+                            )}
+                            {hospitalState === 'confirmed' && (
+                                <Button onClick={handleCompleteRequest} size="sm" className="bg-blue-600 hover:bg-blue-700">
+                                    Complete & Reset
+                                </Button>
+                            )}
+                        </div>
                     </div>
 
                     {acceptedDonors.length === 0 ? (
@@ -345,6 +377,7 @@ export default function HospitalPage() {
                                 const isSelected = selectedDonorIds.includes(donor.id);
                                 const liveLocation = donorLiveLocations[donor.id];
                                 const eta = liveLocation ? calculateETA(liveLocation, hospitalLocation) : null;
+                                const displayName = getDisplayName(donor);
 
                                 return (
                                     <button
@@ -352,14 +385,14 @@ export default function HospitalPage() {
                                         onClick={() => toggleDonorSelection(donor.id)}
                                         disabled={hospitalState === 'confirmed'}
                                         className={`px-3 py-2 rounded-lg flex items-center gap-2 transition-all ${isSelected
-                                                ? 'bg-green-500/20 border-2 border-green-500'
-                                                : 'bg-zinc-800 border-2 border-transparent hover:border-blue-500/50'
+                                            ? 'bg-green-500/20 border-2 border-green-500'
+                                            : 'bg-zinc-800 border-2 border-transparent hover:border-blue-500/50'
                                             } ${hospitalState === 'confirmed' ? 'opacity-60' : ''}`}
                                     >
                                         <span className={`font-bold ${isSelected ? 'text-green-400' : 'text-blue-400'}`}>
                                             {donor.bloodType}
                                         </span>
-                                        <span className="text-white text-sm">{getAnonymousId(donor)}</span>
+                                        <span className="text-white text-sm">{displayName}</span>
                                         {eta && <span className="text-zinc-400 text-xs">{eta.time}m</span>}
                                         {liveLocation && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
                                     </button>

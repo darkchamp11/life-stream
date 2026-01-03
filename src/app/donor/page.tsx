@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import type { BloodRequest, Location } from '@/types';
 import { getCurrentLocation, watchLocation } from '@/lib/geo';
 import {
@@ -26,36 +27,64 @@ const NotSelectedMessage = dynamic(() => import('@/components/NotSelectedMessage
 type DonorState = 'loading' | 'standby' | 'dnd' | 'alert' | 'accepted' | 'confirmed' | 'not-selected';
 
 export default function DonorPage() {
+    const router = useRouter();
     const [donorState, setDonorState] = useState<DonorState>('loading');
     const [location, setLocation] = useState<Location | null>(null);
     const [activeRequest, setActiveRequest] = useState<BloodRequest | null>(null);
     const [identity, setIdentity] = useState<DonorIdentity | null>(null);
     const [isDND, setIsDND] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isInitialized, setIsInitialized] = useState(false);
     const stopWatchRef = useRef<(() => void) | null>(null);
     // Track declined request IDs to prevent re-triggering alert
     const declinedRequestsRef = useRef<Set<string>>(new Set());
     // Track not-selected request IDs to prevent re-triggering alert after dismissal
     const notSelectedRequestsRef = useRef<Set<string>>(new Set());
+    // Track accepted request IDs to prevent re-triggering after page reload
+    const acceptedRequestsRef = useRef<Set<string>>(new Set());
+    // Track donorState in ref to avoid re-running effects when state changes
+    const donorStateRef = useRef<DonorState>(donorState);
+
+    // Keep ref in sync with state
+    useEffect(() => {
+        donorStateRef.current = donorState;
+    }, [donorState]);
 
     // Initialize identity and location
     useEffect(() => {
         const donorIdentity = getDonorIdentity();
+
+        // Redirect to registration if not registered
+        if (!donorIdentity.isRegistered) {
+            router.replace('/donor/register');
+            return;
+        }
+
         setIdentity(donorIdentity);
 
         const dndState = getDNDState();
         setIsDND(dndState.isActive);
 
+        // Restore accepted request IDs from sessionStorage
+        const storedAccepted = sessionStorage.getItem('lifestream_accepted_requests');
+        if (storedAccepted) {
+            try {
+                const ids = JSON.parse(storedAccepted) as string[];
+                ids.forEach(id => acceptedRequestsRef.current.add(id));
+            } catch { /* ignore */ }
+        }
+
         getCurrentLocation()
             .then((loc) => {
                 setLocation(loc);
                 setDonorState(dndState.isActive ? 'dnd' : 'standby');
+                setIsInitialized(true);
             })
             .catch((err) => {
                 setError('Location access denied. Please enable location permissions.');
                 console.error(err);
             });
-    }, []);
+    }, [router]);
 
     // Check if donor can donate to the requested blood type
     const canDonateToType = (donorType: string, requestedType: string): boolean => {
@@ -82,17 +111,23 @@ export default function DonorPage() {
     };
 
     // Subscribe to blood requests
+    // Note: We use donorStateRef.current inside the callback to avoid re-subscribing on every state change
+    // We depend on isInitialized to ensure subscription runs after initialization is complete (not location which changes often)
     useEffect(() => {
-        if (!identity || isDND || donorState === 'loading') return;
+        if (!identity || isDND || !isInitialized) return;
 
         const unsubscribe = subscribeToRequests((request) => {
+            const currentState = donorStateRef.current;
+
             // Request cleared
             if (!request) {
-                // Clear declined and not-selected requests when request is cleared
+                // Clear all tracking sets when request is cleared
                 declinedRequestsRef.current.clear();
                 notSelectedRequestsRef.current.clear();
+                acceptedRequestsRef.current.clear();
+                sessionStorage.removeItem('lifestream_accepted_requests');
 
-                if (donorState === 'alert' || donorState === 'accepted') {
+                if (currentState === 'alert' || currentState === 'accepted') {
                     setActiveRequest(null);
                     setDonorState('standby');
                     if (stopWatchRef.current) {
@@ -115,6 +150,14 @@ export default function DonorPage() {
                     return; // Don't show alert for not-selected requests
                 }
 
+                // Check if we already accepted this request (page might have reloaded)
+                if (acceptedRequestsRef.current.has(request.id)) {
+                    // Restore accepted state
+                    setActiveRequest(request);
+                    setDonorState('accepted');
+                    return;
+                }
+
                 // Check blood type compatibility
                 if (!canDonateToType(identity.bloodType, request.bloodType)) {
                     console.log(`Skipping alert: ${identity.bloodType} cannot donate to ${request.bloodType}`);
@@ -122,7 +165,7 @@ export default function DonorPage() {
                 }
 
                 // Only show alert if in standby
-                if (donorState === 'standby') {
+                if (currentState === 'standby') {
                     setActiveRequest(request);
                     setDonorState('alert');
                 }
@@ -130,13 +173,19 @@ export default function DonorPage() {
         });
 
         return () => unsubscribe();
-    }, [identity, isDND, donorState]);
+    }, [identity, isDND, isInitialized]);
 
     // Subscribe to hospital selection
+    // Note: We use donorStateRef to check state without triggering re-subscription
     useEffect(() => {
-        if (!identity || donorState !== 'accepted') return;
+        if (!identity) return;
+        // Only subscribe when in 'accepted' state
+        if (donorStateRef.current !== 'accepted') return;
 
         const unsubscribe = subscribeToSelection(identity.id, (result) => {
+            // Only process if still in accepted state
+            if (donorStateRef.current !== 'accepted') return;
+
             if (result) {
                 if (result.isSelected) {
                     setDonorState('confirmed');
@@ -163,11 +212,19 @@ export default function DonorPage() {
 
         setDonorState('accepted');
 
+        // Persist accepted request ID for page reload recovery
+        acceptedRequestsRef.current.add(activeRequest.id);
+        sessionStorage.setItem(
+            'lifestream_accepted_requests',
+            JSON.stringify(Array.from(acceptedRequestsRef.current))
+        );
+
         sendDonorResponse({
             donorId: identity.id,
             requestId: activeRequest.id,
             accepted: true,
             liveLocation: location,
+            donorName: identity.realName,  // Include real name for privacy-first reveal
         });
 
         stopWatchRef.current = watchLocation((newLocation) => {
@@ -201,6 +258,11 @@ export default function DonorPage() {
         setDonorState('standby');
         setActiveRequest(null);
     }, [activeRequest]);
+
+    // Handle identity change from settings
+    const handleIdentityChange = useCallback((updatedIdentity: DonorIdentity) => {
+        setIdentity(updatedIdentity);
+    }, []);
 
     // Error state
     if (error) {
@@ -270,13 +332,14 @@ export default function DonorPage() {
                 identity={identity}
                 status={isDND ? 'dnd' : donorState as 'standby' | 'accepted'}
                 onDNDChange={handleDNDChange}
+                onIdentityChange={handleIdentityChange}
             />
 
             {/* Map in Card */}
-            <div className="flex-1 p-4">
+            <div className="p-4">
                 <Card className="bg-zinc-900/80 border-zinc-800 h-full overflow-hidden">
                     <CardContent className="p-0 h-full">
-                        <div className="h-64 md:h-80 relative">
+                        <div className="relative h-64 md:h-80">
                             <DonorMap
                                 donorLocation={location}
                                 hospitalLocation={donorState === 'accepted' && activeRequest ? activeRequest.hospitalLocation : null}
@@ -284,7 +347,7 @@ export default function DonorPage() {
                             />
                             {/* DND Overlay */}
                             {isDND && (
-                                <div className="absolute inset-0 bg-zinc-950/80 flex items-center justify-center z-10">
+                                <div className="absolute inset-0 bg-zinc-950/90 flex items-center justify-center z-[1000]">
                                     <div className="text-center p-4">
                                         <p className="text-amber-400 font-semibold text-lg">🔕 Do Not Disturb</p>
                                         <p className="text-zinc-500 text-sm">You won't receive alerts</p>

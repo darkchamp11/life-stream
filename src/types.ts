@@ -54,6 +54,7 @@ export interface DonorResponse {
     requestId: string;
     accepted: boolean;
     liveLocation?: Location;
+    donorName?: string;  // Real name revealed after consent
 }
 
 export type UserRole = 'hospital' | 'donor' | null;

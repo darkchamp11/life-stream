@@ -134,12 +134,25 @@ export default function AmberAlert({ request, donorBloodType, onAccept, onDeclin
     );
 }
 
-// Simple blood compatibility check
+// Complete blood compatibility check (donor -> recipient)
 function checkBloodCompatibility(donorType: string, recipientType: string): boolean {
+    // Universal donor O- can donate to anyone
     if (donorType === 'O-') return true;
+    // Same type always works
     if (donorType === recipientType) return true;
+    // O+ can donate to any positive type
     if (donorType === 'O+' && recipientType.includes('+')) return true;
-    if (donorType === 'A-' && (recipientType.startsWith('A') || recipientType.startsWith('AB'))) return true;
-    if (donorType === 'B-' && (recipientType.startsWith('B') || recipientType.startsWith('AB'))) return true;
+    // A- can donate to A+, A-, AB+, AB-
+    if (donorType === 'A-' && (recipientType === 'A+' || recipientType === 'A-' || recipientType === 'AB+' || recipientType === 'AB-')) return true;
+    // A+ can donate to A+ and AB+
+    if (donorType === 'A+' && (recipientType === 'A+' || recipientType === 'AB+')) return true;
+    // B- can donate to B+, B-, AB+, AB-
+    if (donorType === 'B-' && (recipientType === 'B+' || recipientType === 'B-' || recipientType === 'AB+' || recipientType === 'AB-')) return true;
+    // B+ can donate to B+ and AB+
+    if (donorType === 'B+' && (recipientType === 'B+' || recipientType === 'AB+')) return true;
+    // AB- can donate to AB+ and AB-
+    if (donorType === 'AB-' && (recipientType === 'AB+' || recipientType === 'AB-')) return true;
+    // AB+ can only donate to AB+
+    if (donorType === 'AB+' && recipientType === 'AB+') return true;
     return false;
 }

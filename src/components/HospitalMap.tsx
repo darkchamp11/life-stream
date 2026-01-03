@@ -99,6 +99,16 @@ const createDonorIcon = (bloodType: string, status: string, isSelected: boolean,
 // Generate anonymous ID
 const getAnonymousId = (donorId: string) => `Donor_${donorId.slice(-5).toUpperCase()}`;
 
+// Get display name for consent-based reveal
+const getDisplayName = (donor: Donor, isSelected: boolean) => {
+  // If donor is confirmed (selected) and has real name (not starting with Donor_), show it
+  if (isSelected && donor.name && !donor.name.startsWith('Donor_')) {
+    return donor.name;
+  }
+  // Otherwise show anonymous ID
+  return getAnonymousId(donor.id);
+};
+
 export default function HospitalMap({
   hospitalLocation,
   donors,
@@ -113,6 +123,7 @@ export default function HospitalMap({
   const hospitalMarkerRef = useRef<L.Marker | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
   const hexagonsRef = useRef<L.LayerGroup | null>(null);
+  const searchRadiusRef = useRef<L.Circle | null>(null);
 
   // Initialize map
   useEffect(() => {
@@ -136,6 +147,16 @@ export default function HospitalMap({
     hospitalMarkerRef.current = L.marker([hospitalLocation.lat, hospitalLocation.lng], {
       icon: createHospitalIcon(false),
       zIndexOffset: 1000
+    }).addTo(mapRef.current);
+
+    // Add search radius circle (15km emergency response zone)
+    searchRadiusRef.current = L.circle([hospitalLocation.lat, hospitalLocation.lng], {
+      radius: 15000,  // 15km in meters
+      color: '#ef4444',
+      fillColor: '#ef4444',
+      fillOpacity: 0.05,
+      weight: 2,
+      dashArray: '10, 10',
     }).addTo(mapRef.current);
 
     // Initialize layer groups
@@ -176,17 +197,21 @@ export default function HospitalMap({
           icon: createDonorIcon(donor.bloodType, donor.status, isSelected, isLive)
         }).addTo(markersRef.current!);
 
-        // Popup with anonymous details
+        // Get display name (consent-based reveal)
+        const displayName = getDisplayName(donor, isSelected);
+
+        // Popup with donor details (anonymous or real name based on consent)
         marker.bindPopup(`
                     <div style="min-width: 160px; font-family: system-ui;">
                         <div style="font-weight: bold; font-size: 15px; margin-bottom: 6px; color: #fff;">
-                            ${anonymousId}
+                            ${displayName}
                         </div>
                         <div style="display: flex; gap: 6px; margin-bottom: 10px;">
                             <span style="background: #ef4444; color: white; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: bold;">
                                 ${donor.bloodType}
                             </span>
                             ${isLive ? '<span style="background: #3b82f6; color: white; padding: 3px 8px; border-radius: 6px; font-size: 11px;">📍 LIVE</span>' : ''}
+                            ${isSelected ? '<span style="background: #22c55e; color: white; padding: 3px 8px; border-radius: 6px; font-size: 11px;">✓ CONFIRMED</span>' : ''}
                         </div>
                         <div style="font-size: 13px; color: #aaa; line-height: 1.6;">
                             <div>🕐 ETA: <strong style="color: #fff;">${eta.time} min</strong></div>
@@ -234,6 +259,6 @@ export default function HospitalMap({
   }, [donors, donorLiveLocations, showPreciseLocations, selectedDonorIds, hospitalLocation, onDonorClick]);
 
   return (
-    <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
+    <div ref={mapContainerRef} className="w-full h-full" style={{ minHeight: '300px' }} />
   );
 }

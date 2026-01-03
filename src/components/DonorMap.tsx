@@ -146,6 +146,6 @@ export default function DonorMap({ donorLocation, hospitalLocation, isSharing }:
     }, [hospitalLocation, donorLocation]);
 
     return (
-        <div ref={mapContainerRef} className="w-full h-full" style={{ minHeight: '100vh' }} />
+        <div ref={mapContainerRef} className="w-full h-full" style={{ minHeight: '256px' }} />
     );
 }

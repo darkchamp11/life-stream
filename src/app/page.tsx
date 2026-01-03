@@ -60,7 +60,7 @@ export default function Home() {
           </Link>
 
           <Link
-            href="/donor"
+            href="/donor/register"
             onClick={() => sessionStorage.setItem('userRole', 'donor')}
             className="group relative px-12 py-6 bg-gradient-to-br from-zinc-700 to-zinc-900 rounded-2xl text-white font-semibold text-xl shadow-2xl shadow-black/30 hover:shadow-red-500/30 transition-all duration-300 hover:scale-105 hover:-translate-y-1 border border-red-500/20"
           >

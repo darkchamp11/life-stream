@@ -25,25 +25,12 @@ const H3_RESOLUTION_PRECISE = 9;
 
 /**
  * Get user's current location using Geolocation API
- * Falls back to a default location for development (when HTTPS not available)
+ * Rejects with error if location access fails - caller should handle fallback display
  */
 export function getCurrentLocation(): Promise<Location> {
-    // Default fallback location (Bangalore, India - for demo)
-    const FALLBACK_LOCATION: Location = {
-        lat: 12.9716,
-        lng: 77.5946,
-    };
-
     return new Promise((resolve, reject) => {
-        // Check if we're in a secure context (HTTPS) or localhost
-        const isSecure = typeof window !== 'undefined' &&
-            (window.location.protocol === 'https:' ||
-                window.location.hostname === 'localhost' ||
-                window.location.hostname === '127.0.0.1');
-
         if (!navigator.geolocation) {
-            console.warn('Geolocation not supported, using fallback location');
-            resolve(FALLBACK_LOCATION);
+            reject(new Error('Geolocation is not supported by your browser'));
             return;
         }
 
@@ -55,13 +42,24 @@ export function getCurrentLocation(): Promise<Location> {
                 });
             },
             (error) => {
-                // On error (permission denied, or HTTP on mobile), use fallback
-                console.warn('Geolocation error, using fallback:', error.message);
-                resolve(FALLBACK_LOCATION);
+                // Reject with a user-friendly error message
+                let errorMessage = 'Unable to get your location';
+                switch (error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorMessage = 'Location permission denied. Please enable location access in your browser settings.';
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorMessage = 'Location information unavailable. Make sure you are using HTTPS.';
+                        break;
+                    case error.TIMEOUT:
+                        errorMessage = 'Location request timed out. Please try again.';
+                        break;
+                }
+                reject(new Error(errorMessage));
             },
             {
                 enableHighAccuracy: true,
-                timeout: 5000,
+                timeout: 10000,
                 maximumAge: 60000,
             }
         );
@@ -131,34 +129,41 @@ export function getH3Boundary(h3Index: string): [number, number][] {
 
 /**
  * Generate fake donors around a center location using H3
+ * DETERMINISTIC: Uses pseudo-random based on index for stable demo
  */
 export function generateFakeDonors(centerLocation: Location, count = 5): Donor[] {
     const names = ['Rahul Sharma', 'Priya Patel', 'Amit Kumar', 'Sneha Gupta', 'Vikram Singh'];
     const bloodTypes: BloodType[] = ['A+', 'B+', 'O+', 'AB+', 'O-'];
-    const trafficStatuses: TrafficStatus[] = ['heavy', 'moderate', 'clear'];
+    const trafficStatuses: TrafficStatus[] = ['clear', 'moderate', 'clear', 'heavy', 'clear'];
+
+    // Pseudo-random function based on seed (deterministic)
+    const pseudoRandom = (seed: number): number => {
+        return Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+    };
 
     // Get the center H3 cell and its neighbors
     const centerH3 = h3.latLngToCell(centerLocation.lat, centerLocation.lng, H3_RESOLUTION_PRIVACY);
     const neighborCells = h3.gridDisk(centerH3, 2); // Get cells within 2 rings
 
-    // Shuffle and pick cells for donors
-    const shuffledCells = neighborCells.sort(() => Math.random() - 0.5).slice(0, count);
+    // Select cells deterministically (first `count` cells after sorting by h3Index)
+    const sortedCells = [...neighborCells].sort().slice(0, count);
 
-    return shuffledCells.map((h3Index, i) => {
+    return sortedCells.map((h3Index, i) => {
         const center = h3.cellToLatLng(h3Index);
-        // Add slight random offset within the cell
+        // Add deterministic offset within the cell based on index
         const offset = 0.002;
-        const lat = center[0] + (Math.random() - 0.5) * offset;
-        const lng = center[1] + (Math.random() - 0.5) * offset;
+        const lat = center[0] + (pseudoRandom(i * 7) - 0.5) * offset;
+        const lng = center[1] + (pseudoRandom(i * 13) - 0.5) * offset;
 
-        const trafficStatus = trafficStatuses[Math.floor(Math.random() * trafficStatuses.length)];
-        const baseTime = Math.floor(Math.random() * 10) + 5; // 5-15 mins base
+        const trafficStatus = trafficStatuses[i % trafficStatuses.length];
+        // Deterministic base time: 5-15 mins based on index
+        const baseTime = 5 + (i * 2) % 10;
         const trafficMultiplier = trafficStatus === 'heavy' ? 1.5 : trafficStatus === 'moderate' ? 1.2 : 1;
 
         return {
             id: `donor-${i + 1}`,
-            name: names[i],
-            bloodType: bloodTypes[i],
+            name: names[i % names.length],
+            bloodType: bloodTypes[i % bloodTypes.length],
             status: 'active' as const,
             location: { lat, lng },
             h3Index: getH3Index({ lat, lng }),
