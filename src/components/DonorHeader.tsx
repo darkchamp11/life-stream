@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import DNDTimer from '@/components/DNDTimer';
 import type { DonorIdentity } from '@/lib/donor-identity';
 import { getAvatarUrl, clearDonorIdentity, updateDonorBloodType } from '@/lib/donor-identity';
@@ -108,6 +108,9 @@ export default function DonorHeader({ identity, status, onDNDChange, onIdentityC
                 <DialogContent className="bg-zinc-900 border-zinc-800 text-white max-w-sm mx-4">
                     <DialogHeader>
                         <DialogTitle className="text-lg">Settings</DialogTitle>
+                        <DialogDescription className="text-zinc-400 text-sm">
+                            Manage your blood type and account settings.
+                        </DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-6 py-2">
@@ -120,8 +123,8 @@ export default function DonorHeader({ identity, status, onDNDChange, onIdentityC
                                         key={type}
                                         onClick={() => handleBloodTypeChange(type)}
                                         className={`py-2.5 rounded-lg font-bold transition-all ${selectedBloodType === type
-                                                ? 'bg-red-500 text-white ring-2 ring-red-400'
-                                                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                                            ? 'bg-red-500 text-white ring-2 ring-red-400'
+                                            : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
                                             }`}
                                     >
                                         {type}

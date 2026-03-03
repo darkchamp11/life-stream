@@ -55,6 +55,13 @@ body {
   font-family: inherit;
 }
 
+/* Ensure dialogs appear above Leaflet maps (which use z-index 400+) */
+[data-radix-popper-content-wrapper],
+[data-state="open"][data-radix-dialog-overlay],
+[data-state="open"][data-radix-dialog-content] {
+  z-index: 9999 !important;
+}
+
 .leaflet-popup-content-wrapper {
   background: #18181b;
   color: #ededed;

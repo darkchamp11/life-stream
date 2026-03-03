@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type { Donor, BloodRequest, BloodType, Location } from '@/types';
-import { getCurrentLocation, generateFakeDonors, getH3Index, calculateETA } from '@/lib/geo';
+import { getCurrentLocation, generateFakeDonors, getH3Index, calculateETA, getPrioritizedDonors, type SelectionLog } from '@/lib/geo';
 import {
     broadcastRequest,
     clearRequest,
@@ -17,17 +17,20 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import HospitalSettings, { DEMO_LOCATIONS } from '@/components/HospitalSettings';
+import DonorSimulator from '@/components/DonorSimulator';
 
 // Dynamic import for Leaflet (SSR issues)
 const HospitalMap = dynamic(() => import('@/components/HospitalMap'), { ssr: false });
 
 const BLOOD_TYPES: BloodType[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
-type HospitalState = 'idle' | 'scanning' | 'active' | 'confirmed';
+type HospitalState = 'idle' | 'active' | 'confirmed';
 
 export default function HospitalPage() {
     const [hospitalLocation, setHospitalLocation] = useState<Location | null>(null);
-    const [donors, setDonors] = useState<Donor[]>([]);
+    const [allDonors, setAllDonors] = useState<Donor[]>([]); // Full unfiltered donor pool
+    const [prioritizedDonors, setPrioritizedDonors] = useState<Donor[]>([]); // Engine-filtered + sorted
     const [activeRequest, setActiveRequest] = useState<BloodRequest | null>(null);
     const [selectedBloodType, setSelectedBloodType] = useState<BloodType>('O+');
     const [hospitalState, setHospitalState] = useState<HospitalState>('idle');
@@ -36,8 +39,26 @@ export default function HospitalPage() {
     const [selectedDonorIds, setSelectedDonorIds] = useState<string[]>([]);
     const [donorDetailDialog, setDonorDetailDialog] = useState<Donor | null>(null);
     const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
+    const [selectionLog, setSelectionLog] = useState<SelectionLog | null>(null);
     const [isInitialized, setIsInitialized] = useState(false);
     const unsubscribeRef = useRef<(() => void)[]>([]);
+
+    // Hospital settings
+    const [searchRadius, setSearchRadius] = useState(15); // km
+    const [selectedLocationId, setSelectedLocationId] = useState('current');
+
+    // Handle demo location change
+    const handleLocationChange = useCallback((locationId: string, location: Location | null) => {
+        console.log('[HospitalPage] handleLocationChange:', { locationId, location });
+        setSelectedLocationId(locationId);
+        if (location) {
+            setHospitalLocation(location);
+            console.log('[HospitalPage] Hospital location updated to:', location);
+            // Regenerate donors for new location
+            const fakeDonors = generateFakeDonors(location);
+            setAllDonors(fakeDonors);
+        }
+    }, []);
 
     // Get hospital location on mount - ONCE
     useEffect(() => {
@@ -46,8 +67,8 @@ export default function HospitalPage() {
         getCurrentLocation()
             .then((location) => {
                 setHospitalLocation(location);
-                const fakeDonors = generateFakeDonors(location, 5);
-                setDonors(fakeDonors);
+                const fakeDonors = generateFakeDonors(location);
+                setAllDonors(fakeDonors);
                 setIsInitialized(true);
             })
             .catch((err) => {
@@ -65,7 +86,7 @@ export default function HospitalPage() {
         const unsubResponses = subscribeToResponses((responses) => {
             if (responses.length === 0) return;
 
-            setDonors((prev) => {
+            setPrioritizedDonors((prev) => {
                 let updated = [...prev];
                 responses.forEach((response) => {
                     const existingIndex = updated.findIndex((d) => d.id === response.donorId);
@@ -116,10 +137,23 @@ export default function HospitalPage() {
     const handleRequestBlood = useCallback(() => {
         if (!hospitalLocation) return;
 
-        setHospitalState('scanning');
-        setSelectedDonorIds([]);
         setConfirmationMessage(null);
 
+        // =============================================
+        // REAL DONOR SELECTION ENGINE — NO ARTIFICIAL DELAY
+        // =============================================
+        const { prioritized, log } = getPrioritizedDonors(
+            allDonors, hospitalLocation, selectedBloodType, searchRadius
+        );
+
+        // Store engine results
+        setPrioritizedDonors(prioritized);
+        setSelectionLog(log);
+
+        // Do NOT auto-select here — wait for donor consent first
+        setSelectedDonorIds([]);
+
+        // Build and broadcast request
         const request: BloodRequest = {
             id: `req-${Date.now()}`,
             hospitalId: 'hospital-1',
@@ -127,26 +161,44 @@ export default function HospitalPage() {
             hospitalLocation,
             bloodType: selectedBloodType,
             urgency: 'critical',
-            status: 'scanning',
+            status: 'active',
             createdAt: new Date(),
             respondingDonors: [],
         };
 
-        // Simulate scanning delay
-        setTimeout(() => {
-            setHospitalState('active');
-            setActiveRequest({ ...request, status: 'active' });
-            broadcastRequest({ ...request, status: 'active' });
-        }, 3000);
-    }, [hospitalLocation, selectedBloodType]);
+        setHospitalState('active');
+        setActiveRequest(request);
+        broadcastRequest(request);
+
+        // Console debug logging for technical demonstration
+        console.group('[LifeStream] Donor Selection Engine');
+        console.log('Total Donors:', log.totalDonors);
+        console.log('Within Radius:', log.withinRadius);
+        console.log('Compatible:', log.compatible);
+        console.log('Nearest Distance:', log.nearestDistanceKm);
+        console.log('Farthest Distance:', log.farthestDistanceKm);
+        console.log('Average Distance:', log.averageDistanceKm);
+        console.log('Sorted:', log.sorted);
+        console.log('Prioritized IDs:', prioritized.map(d => d.id));
+        console.groupEnd();
+
+        console.log('[LifeStream] 🚨 Request broadcasted:', {
+            bloodType: request.bloodType,
+            hospitalName: request.hospitalName,
+            requestId: request.id,
+        });
+    }, [hospitalLocation, selectedBloodType, allDonors, searchRadius]);
 
     const handleCancelRequest = useCallback(() => {
         setActiveRequest(null);
         setHospitalState('idle');
-        setDonors((prev) => prev.map((d) => ({ ...d, status: 'active' as const })));
+        setPrioritizedDonors([]);
         setDonorLiveLocations({});
         setSelectedDonorIds([]);
         setConfirmationMessage(null);
+        setSelectionLog(null);
+        // Reset all donors to active
+        setAllDonors((prev) => prev.map((d) => ({ ...d, status: 'active' as const })));
         clearRequest();
         clearSelection();
     }, []);
@@ -159,22 +211,41 @@ export default function HospitalPage() {
         );
     }, []);
 
+    // Add demo donor
+    const handleAddDonor = useCallback((donor: Donor) => {
+        setAllDonors(prev => [...prev, donor]);
+    }, []);
+
+    // Remove demo donor
+    const handleRemoveDonor = useCallback((donorId: string) => {
+        setAllDonors(prev => prev.filter(d => d.id !== donorId));
+    }, []);
+
     const handleConfirmSelection = useCallback(() => {
         if (!activeRequest || selectedDonorIds.length === 0) return;
 
         confirmDonorSelection(activeRequest.id, selectedDonorIds);
         setHospitalState('confirmed');
         setConfirmationMessage(`✅ ${selectedDonorIds.length} donor(s) confirmed! They are on their way.`);
+
+        // Console log for review evidence
+        console.log('[LifeStream] ✅ Donor selected:', {
+            requestId: activeRequest.id,
+            selectedDonorIds,
+            count: selectedDonorIds.length,
+        });
     }, [activeRequest, selectedDonorIds]);
 
     const handleCompleteRequest = useCallback(() => {
         // Reset entire hospital state
         setActiveRequest(null);
         setHospitalState('idle');
-        setDonors((prev) => prev.map((d) => ({ ...d, status: 'active' as const })));
+        setPrioritizedDonors([]);
+        setAllDonors((prev) => prev.map((d) => ({ ...d, status: 'active' as const })));
         setDonorLiveLocations({});
         setSelectedDonorIds([]);
         setConfirmationMessage(null);
+        setSelectionLog(null);
         clearRequest();
         clearSelection();
     }, []);
@@ -191,7 +262,7 @@ export default function HospitalPage() {
 
     const getAnonymousId = (donor: Donor) => `Donor_${donor.id.slice(-5).toUpperCase()}`;
 
-    const acceptedDonors = donors.filter(d => d.status === 'accepted');
+    const acceptedDonors = prioritizedDonors.filter(d => d.status === 'accepted');
 
     if (error) {
         return (
@@ -263,43 +334,39 @@ export default function HospitalPage() {
                     </CardContent>
                 </Card>
 
+                {/* Hospital Settings (Demo) */}
+                <HospitalSettings
+                    searchRadius={searchRadius}
+                    onSearchRadiusChange={setSearchRadius}
+                    selectedLocationId={selectedLocationId}
+                    onLocationChange={handleLocationChange}
+                    currentLocation={hospitalLocation}
+                />
+
+                {/* Donor Simulator (Demo) */}
+                <DonorSimulator
+                    donors={allDonors}
+                    hospitalLocation={hospitalLocation}
+                    onAddDonor={handleAddDonor}
+                    onRemoveDonor={handleRemoveDonor}
+                />
+
                 {/* Map Preview in Card */}
                 <Card className="bg-zinc-900/80 border-zinc-800 flex-1 overflow-hidden">
                     <CardContent className="p-0 h-full">
                         <div className="h-64 md:h-full min-h-[300px] relative">
                             <HospitalMap
                                 hospitalLocation={hospitalLocation}
-                                donors={donors}
+                                donors={allDonors}
                                 donorLiveLocations={donorLiveLocations}
                                 showPreciseLocations={false}
                                 isScanning={false}
                                 selectedDonorIds={[]}
+                                searchRadius={searchRadius}
                             />
                         </div>
                     </CardContent>
                 </Card>
-            </div>
-        );
-    }
-
-    // SCANNING STATE
-    if (hospitalState === 'scanning') {
-        return (
-            <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-                <div className="text-center">
-                    <div className="relative w-40 h-40 mx-auto mb-6">
-                        <div className="absolute inset-0 border-4 border-red-500/20 rounded-full animate-ping" />
-                        <div className="absolute inset-4 border-4 border-red-500/30 rounded-full animate-ping" style={{ animationDelay: '0.3s' }} />
-                        <div className="absolute inset-8 border-4 border-red-500/40 rounded-full animate-ping" style={{ animationDelay: '0.6s' }} />
-                        <div className="absolute inset-10 bg-gradient-to-br from-red-500 to-red-700 rounded-full flex items-center justify-center">
-                            <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 11h-4v4h-4v-4H6v-4h4V6h4v4h4v4z" />
-                            </svg>
-                        </div>
-                    </div>
-                    <h2 className="text-xl font-bold text-white mb-2">Scanning for Donors</h2>
-                    <p className="text-zinc-400">Requesting {selectedBloodType} blood...</p>
-                </div>
             </div>
         );
     }
@@ -325,17 +392,66 @@ export default function HospitalPage() {
                 </Button>
             </div>
 
+            {/* Execution Log Panel — Real engine output */}
+            {selectionLog && (
+                <Card className="bg-zinc-900/80 border-zinc-800 mb-4">
+                    <CardContent className="p-4">
+                        <h3 className="text-sm font-semibold text-zinc-300 mb-3 flex items-center gap-2">
+                            <span className="w-2 h-2 bg-green-500 rounded-full" />
+                            Engine Execution Log
+                        </h3>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Total Donors</span>
+                                <span className="text-white font-mono">{selectionLog.totalDonors}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Within Radius</span>
+                                <span className="text-white font-mono">{selectionLog.withinRadius}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Compatible</span>
+                                <span className="text-emerald-400 font-mono">{selectionLog.compatible}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Sorted</span>
+                                <span className="text-emerald-400 font-mono">{selectionLog.sorted ? '✓' : '✗'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Nearest</span>
+                                <span className="text-white font-mono">
+                                    {selectionLog.nearestDistanceKm !== null ? `${selectionLog.nearestDistanceKm} km` : '—'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-zinc-500">Farthest</span>
+                                <span className="text-white font-mono">
+                                    {selectionLog.farthestDistanceKm !== null ? `${selectionLog.farthestDistanceKm} km` : '—'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between col-span-2">
+                                <span className="text-zinc-500">Avg Distance</span>
+                                <span className="text-white font-mono">
+                                    {selectionLog.averageDistanceKm !== null ? `${selectionLog.averageDistanceKm} km` : '—'}
+                                </span>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
             {/* Map in Card */}
             <Card className="bg-zinc-900/80 border-zinc-800 flex-1 overflow-hidden mb-4">
                 <CardContent className="p-0 h-full">
                     <div className="h-64 md:h-96 relative">
                         <HospitalMap
                             hospitalLocation={hospitalLocation}
-                            donors={donors}
+                            donors={prioritizedDonors}
                             donorLiveLocations={donorLiveLocations}
                             showPreciseLocations={true}
                             isScanning={false}
                             selectedDonorIds={selectedDonorIds}
+                            searchRadius={searchRadius}
                         />
                     </div>
                 </CardContent>
@@ -354,7 +470,7 @@ export default function HospitalPage() {
             <Card className="bg-zinc-900/80 border-zinc-800">
                 <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-3">
-                        <span className="text-zinc-400 text-sm">Responding Donors: {acceptedDonors.length}</span>
+                        <span className="text-zinc-400 text-sm">Consented Donors: {acceptedDonors.length}</span>
                         <div className="flex gap-2">
                             {selectedDonorIds.length > 0 && hospitalState !== 'confirmed' && (
                                 <Button onClick={handleConfirmSelection} size="sm" className="bg-green-600 hover:bg-green-700">

@@ -13,6 +13,7 @@ interface HospitalMapProps {
   isScanning?: boolean;
   selectedDonorIds?: string[];
   onDonorClick?: (donor: Donor) => void;
+  searchRadius?: number; // in km, default 15
 }
 
 // Hospital icon with radar animation
@@ -116,7 +117,8 @@ export default function HospitalMap({
   showPreciseLocations,
   isScanning = false,
   selectedDonorIds = [],
-  onDonorClick
+  onDonorClick,
+  searchRadius = 15
 }: HospitalMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -149,9 +151,9 @@ export default function HospitalMap({
       zIndexOffset: 1000
     }).addTo(mapRef.current);
 
-    // Add search radius circle (15km emergency response zone)
+    // Add search radius circle (configurable emergency response zone)
     searchRadiusRef.current = L.circle([hospitalLocation.lat, hospitalLocation.lng], {
-      radius: 15000,  // 15km in meters
+      radius: searchRadius * 1000,  // convert km to meters
       color: '#ef4444',
       fillColor: '#ef4444',
       fillOpacity: 0.05,
@@ -167,6 +169,16 @@ export default function HospitalMap({
       mapRef.current?.remove();
       mapRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Update hospital marker, radius, and map center when location changes
+  useEffect(() => {
+    if (!mapRef.current || !hospitalMarkerRef.current || !searchRadiusRef.current) return;
+
+    hospitalMarkerRef.current.setLatLng([hospitalLocation.lat, hospitalLocation.lng]);
+    searchRadiusRef.current.setLatLng([hospitalLocation.lat, hospitalLocation.lng]);
+    mapRef.current.flyTo([hospitalLocation.lat, hospitalLocation.lng], mapRef.current.getZoom());
   }, [hospitalLocation]);
 
   // Update hospital marker animation
@@ -174,6 +186,12 @@ export default function HospitalMap({
     if (!mapRef.current || !hospitalMarkerRef.current) return;
     hospitalMarkerRef.current.setIcon(createHospitalIcon(isScanning || showPreciseLocations));
   }, [isScanning, showPreciseLocations]);
+
+  // Update search radius circle when radius changes
+  useEffect(() => {
+    if (!searchRadiusRef.current) return;
+    searchRadiusRef.current.setRadius(searchRadius * 1000); // convert km to meters
+  }, [searchRadius]);
 
   // Update donor markers
   useEffect(() => {
@@ -258,7 +276,26 @@ export default function HospitalMap({
     });
   }, [donors, donorLiveLocations, showPreciseLocations, selectedDonorIds, hospitalLocation, onDonorClick]);
 
+  // Determine if any accepted donors are showing precise locations
+  const hasAcceptedDonors = donors.some(d => d.status === 'accepted');
+  const showingPreciseLocations = showPreciseLocations && hasAcceptedDonors;
+
   return (
-    <div ref={mapContainerRef} className="w-full h-full" style={{ minHeight: '300px' }} />
+    <div className="relative w-full h-full" style={{ minHeight: '300px' }}>
+      <div ref={mapContainerRef} className="w-full h-full" />
+
+      {/* Privacy Disclosure Label */}
+      <div className="absolute bottom-2 left-2 z-[1000]">
+        <div className={`px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-sm ${showingPreciseLocations
+          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+          }`}>
+          {showingPreciseLocations
+            ? '📍 Location Privacy: Exact (Post-Consent)'
+            : '🔒 Location Privacy: Abstracted (Pre-Consent)'
+          }
+        </div>
+      </div>
+    </div>
   );
 }

@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { BloodRequest, Location } from '@/types';
 import { getCurrentLocation, watchLocation } from '@/lib/geo';
+import { canDonateToType } from '@/lib/compatibility';
 import {
     subscribeToRequests,
     sendDonorResponse,
@@ -52,6 +53,44 @@ export default function DonorPage() {
 
     // Initialize identity and location
     useEffect(() => {
+        // Check for demo mode (from Donor Simulator)
+        const urlParams = new URLSearchParams(window.location.search);
+        const isDemo = urlParams.get('demo') === 'true';
+        const demoDonorId = urlParams.get('donorId');
+
+        if (isDemo && demoDonorId) {
+            // Demo mode: Get donor data from sessionStorage
+            const demoDonors = JSON.parse(sessionStorage.getItem('lifestream_demo_donors') || '{}');
+            const fakeDonor = demoDonors[demoDonorId];
+
+            if (fakeDonor) {
+                // Generate anonymous username from donor ID (privacy-first)
+                const anonymousUsername = `Donor_${fakeDonor.id.slice(-5).toUpperCase()}`;
+
+                // Create a demo identity from the fake donor data
+                // Privacy-first: username is anonymous, realName is revealed after consent
+                const demoIdentity: DonorIdentity = {
+                    id: fakeDonor.id,
+                    username: anonymousUsername,  // Anonymous ID shown before consent
+                    realName: `Demo User ${fakeDonor.id.slice(-3).toUpperCase()}`,  // Demo name for after consent
+                    bloodType: fakeDonor.bloodType,
+                    avatarSeed: fakeDonor.id,
+                    donationCount: Math.floor(Math.random() * 5),
+                    donationHistory: [],
+                    createdAt: new Date().toISOString(),
+                    isRegistered: true, // Mark as registered for demo
+                };
+
+                setIdentity(demoIdentity);
+                setLocation(fakeDonor.location);
+                setDonorState('standby');
+                setIsInitialized(true);
+                console.log('[LifeStream Demo] Logged in as:', anonymousUsername, '| Blood:', fakeDonor.bloodType, '| Location:', fakeDonor.location);
+                return;
+            }
+        }
+
+        // Normal mode: Check real donor identity
         const donorIdentity = getDonorIdentity();
 
         // Redirect to registration if not registered
@@ -74,6 +113,15 @@ export default function DonorPage() {
             } catch { /* ignore */ }
         }
 
+        // Restore declined request IDs from sessionStorage
+        const storedDeclined = sessionStorage.getItem('lifestream_declined_requests');
+        if (storedDeclined) {
+            try {
+                const ids = JSON.parse(storedDeclined) as string[];
+                ids.forEach(id => declinedRequestsRef.current.add(id));
+            } catch { /* ignore */ }
+        }
+
         getCurrentLocation()
             .then((loc) => {
                 setLocation(loc);
@@ -86,29 +134,6 @@ export default function DonorPage() {
             });
     }, [router]);
 
-    // Check if donor can donate to the requested blood type
-    const canDonateToType = (donorType: string, requestedType: string): boolean => {
-        // Universal donor
-        if (donorType === 'O-') return true;
-        // Same type
-        if (donorType === requestedType) return true;
-        // O+ can donate to positive types
-        if (donorType === 'O+' && requestedType.includes('+')) return true;
-        // A- can donate to A and AB
-        if (donorType === 'A-' && (requestedType === 'A+' || requestedType === 'A-' || requestedType === 'AB+' || requestedType === 'AB-')) return true;
-        // A+ can donate to A+ and AB+
-        if (donorType === 'A+' && (requestedType === 'A+' || requestedType === 'AB+')) return true;
-        // B- can donate to B and AB
-        if (donorType === 'B-' && (requestedType === 'B+' || requestedType === 'B-' || requestedType === 'AB+' || requestedType === 'AB-')) return true;
-        // B+ can donate to B+ and AB+
-        if (donorType === 'B+' && (requestedType === 'B+' || requestedType === 'AB+')) return true;
-        // AB- can donate to AB
-        if (donorType === 'AB-' && (requestedType === 'AB+' || requestedType === 'AB-')) return true;
-        // AB+ can only donate to AB+
-        if (donorType === 'AB+' && requestedType === 'AB+') return true;
-
-        return false;
-    };
 
     // Subscribe to blood requests
     // Note: We use donorStateRef.current inside the callback to avoid re-subscribing on every state change
@@ -126,6 +151,7 @@ export default function DonorPage() {
                 notSelectedRequestsRef.current.clear();
                 acceptedRequestsRef.current.clear();
                 sessionStorage.removeItem('lifestream_accepted_requests');
+                sessionStorage.removeItem('lifestream_declined_requests');
 
                 if (currentState === 'alert' || currentState === 'accepted') {
                     setActiveRequest(null);
@@ -238,6 +264,10 @@ export default function DonorPage() {
 
         // Mark this request as declined so we don't show alert again
         declinedRequestsRef.current.add(activeRequest.id);
+        sessionStorage.setItem(
+            'lifestream_declined_requests',
+            JSON.stringify(Array.from(declinedRequestsRef.current))
+        );
 
         sendDonorResponse({
             donorId: identity.id,

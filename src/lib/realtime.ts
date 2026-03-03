@@ -114,6 +114,15 @@ export function sendDonorResponse(response: DonorResponse): void {
         ...response,
         timestamp: Date.now(),
     });
+
+    // Console log for review evidence
+    if (response.accepted) {
+        console.log('[LifeStream] 👤 Donor accepted request:', {
+            donorId: response.donorId,
+            requestId: response.requestId,
+            hasLiveLocation: !!response.liveLocation,
+        });
+    }
 }
 
 /**
