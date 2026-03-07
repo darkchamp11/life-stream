@@ -1,13 +1,8 @@
 /**
- * Health Check API Route
+ * GET /api/health
  * 
- * PURPOSE:
- * - Verifies that the Next.js API layer is functioning
- * - Required for Early Implementation validation
- * - Can be extended to check Firebase connectivity
- * 
- * ENDPOINT: GET /api/health
- * RESPONSE: { status: "ok", timestamp: ISO8601 }
+ * Health check endpoint.
+ * Verifies that the API layer is functioning.
  */
 
 import { NextResponse } from 'next/server';
@@ -17,6 +12,7 @@ export async function GET() {
         status: 'ok',
         timestamp: new Date().toISOString(),
         service: 'life-stream',
-        version: '1.0.0',
+        version: '2.0.0',
+        architecture: 'MVVM',
     });
 }

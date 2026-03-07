@@ -1,0 +1,54 @@
+/**
+ * Firebase Service (Mobile App)
+ * 
+ * Initializes Firebase for React Native.
+ * Uses the same RTDB instance as the hospital dashboard.
+ * 
+ * LAZY INITIALIZATION: Firebase Database is only initialized when
+ * getFirebaseDatabase() is called, not at module load time.
+ * This prevents crashes when env vars are not yet loaded.
+ */
+
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import { getDatabase, Database } from 'firebase/database';
+
+function getConfig() {
+    return {
+        apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || '',
+        authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
+        databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL || '',
+        projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || '',
+        storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || '',
+        messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
+        appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || '',
+    };
+}
+
+let _app: FirebaseApp | null = null;
+let _database: Database | null = null;
+
+function getApp(): FirebaseApp {
+    if (!_app) {
+        _app = getApps().length === 0 ? initializeApp(getConfig()) : getApps()[0];
+    }
+    return _app;
+}
+
+/**
+ * Get Firebase Database instance (lazy — safe to import without crashing)
+ */
+export function getFirebaseDatabase(): Database {
+    if (!_database) {
+        _database = getDatabase(getApp());
+    }
+    return _database;
+}
+
+// For backwards compat — but prefer getFirebaseDatabase()
+export const database = new Proxy({} as Database, {
+    get(_, prop) {
+        return (getFirebaseDatabase() as any)[prop];
+    },
+});
+
+export default { getApp, getFirebaseDatabase };
